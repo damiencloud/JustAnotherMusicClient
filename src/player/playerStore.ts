@@ -43,7 +43,9 @@ type PlayerControllerMethod =
   | "getPlayerSession"
   | "removeFromQueueAt"
   | "playQueueTrackAt"
-  | "moveQueueTrack";
+  | "moveQueueTrack"
+  | "addTracksToQueue"
+  | "clearQueue";
 
 export type PlayerControllerActions = Pick<PlayerController, PlayerControllerMethod>;
 
@@ -120,6 +122,9 @@ class ActivePlayerController implements PlayerControllerActions {
     targetIndex: number,
     insertAfter: boolean,
   ) => tabManager.getActivePlayer().moveQueueTrack(sourceIndex, targetIndex, insertAfter);
+  addTracksToQueue = (tracks: Parameters<PlayerController["addTracksToQueue"]>[0]) =>
+    tabManager.getActivePlayer().addTracksToQueue(tracks);
+  clearQueue = () => tabManager.getActivePlayer().clearQueue();
 }
 
 export const playerController: PlayerControllerActions = new ActivePlayerController();

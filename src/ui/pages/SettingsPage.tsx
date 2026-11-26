@@ -26,7 +26,16 @@ import {
   IconStar,
   IconTrash,
   IconUser,
+  IconDeviceMobile,
 } from "@tabler/icons-react";
+import { QRCodeSvg } from "../components/remote/QRCodeSvg";
+import {
+  useRemoteControlEnabled,
+  setRemoteControlEnabled,
+  useRemoteControlPort,
+  setRemoteControlPort,
+} from "../settings/remoteControl";
+import { useRemoteServer } from "../../player/useRemoteServer";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -149,11 +158,12 @@ const KOFI_URL = "https://ko-fi.com/totally2late";
 const USERJOT_FEEDBACK_URL = "https://justanothermusicclient.userjot.com/";
 const USERJOT_ROADMAP_URL = "https://justanothermusicclient.userjot.com/roadmap";
 
-type SettingsTab = "about" | "system" | "shortcuts" | "window" | "plugins";
+type SettingsTab = "about" | "system" | "remote" | "shortcuts" | "window" | "plugins";
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "about", label: "About" },
   { id: "system", label: "System" },
+  { id: "remote", label: "Remote" },
   { id: "window", label: "Style" },
   { id: "plugins", label: "Plugins" },
   { id: "shortcuts", label: "Shortcuts" },
@@ -321,6 +331,10 @@ export function SettingsPage({
   const glassThemeSettings = useGlassThemeSettings();
   const matrixThemeSettings = useMatrixThemeSettings();
   const miniPlayerEnabled = useMiniPlayerEnabled();
+  const remoteControlEnabled = useRemoteControlEnabled();
+  const remoteControlPort = useRemoteControlPort();
+  const { serverInfo } = useRemoteServer();
+  const [remoteCopied, setRemoteCopied] = useState(false);
   const minimizeToTrayEnabled = useMinimizeToTrayEnabled();
   const miniPlayerHoverAction = useMiniPlayerHoverAction();
   const extraPlayerControlsAlwaysVisible = useExtraPlayerControlsAlwaysVisible();
@@ -1373,6 +1387,110 @@ export function SettingsPage({
 
               {resetSettingsError && <p className={styles.error}>{resetSettingsError}</p>}
             </div>
+          </section>
+        </div>
+      )}
+
+      {activeTab === "remote" && (
+        <div className={styles.tabPanel} role="tabpanel" aria-label="Mobile Remote settings">
+          <section className={styles.card} aria-labelledby="remote-settings-title">
+            <div className={styles.cardHeader}>
+              <div>
+                <h2 id="remote-settings-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <IconDeviceMobile size={22} color="#1ed760" />
+                  <span>Mobile Web Remote</span>
+                </h2>
+                <p>Control music playing on this PC from Safari or Chrome on your iPhone.</p>
+              </div>
+            </div>
+
+            <label className={styles.toggleRow}>
+              <span className={styles.toggleDescription}>
+                <strong>Enable Mobile Web Remote</strong>
+                <span>Allows devices on your local Wi-Fi network to control music playback.</span>
+              </span>
+              <input
+                className={styles.toggleInput}
+                type="checkbox"
+                checked={remoteControlEnabled}
+                onChange={(event) => setRemoteControlEnabled(event.target.checked)}
+              />
+              <span className={styles.toggle} aria-hidden="true" />
+            </label>
+
+            {remoteControlEnabled && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "18px", marginTop: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
+                  <div style={{ background: "#ffffff", padding: "12px", borderRadius: "12px", width: "fit-content" }}>
+                    <QRCodeSvg value={serverInfo.defaultUrl || `http://localhost:${remoteControlPort}`} size={160} />
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: "240px", display: "flex", flexDirection: "column", gap: "14px" }}>
+                    <div>
+                      <span style={{ fontSize: "12px", color: "var(--text-sub)", display: "block", marginBottom: "6px" }}>
+                        iPhone Web Address
+                      </span>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <input
+                          type="text"
+                          readOnly
+                          value={serverInfo.defaultUrl || `http://localhost:${remoteControlPort}`}
+                          style={{
+                            flex: 1,
+                            background: "rgba(255, 255, 255, 0.08)",
+                            border: "1px solid rgba(255, 255, 255, 0.15)",
+                            borderRadius: "8px",
+                            padding: "8px 12px",
+                            color: "#fff",
+                            fontFamily: "monospace",
+                            fontSize: "13px",
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className={styles.actionButton}
+                          onClick={() => {
+                            void navigator.clipboard.writeText(serverInfo.defaultUrl || `http://localhost:${remoteControlPort}`);
+                            setRemoteCopied(true);
+                            setTimeout(() => setRemoteCopied(false), 2000);
+                          }}
+                        >
+                          {remoteCopied ? "Copied!" : "Copy URL"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <span style={{ fontSize: "12px", color: "var(--text-sub)" }}>Port:</span>
+                      <input
+                        type="number"
+                        value={remoteControlPort}
+                        onChange={(event) => setRemoteControlPort(parseInt(event.target.value, 10) || 9863)}
+                        style={{
+                          width: "90px",
+                          background: "rgba(255, 255, 255, 0.08)",
+                          border: "1px solid rgba(255, 255, 255, 0.15)",
+                          borderRadius: "6px",
+                          padding: "6px 8px",
+                          color: "#fff",
+                          fontSize: "13px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: "rgba(255, 255, 255, 0.04)", borderRadius: "10px", padding: "14px 18px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                  <strong style={{ fontSize: "13px", display: "block", marginBottom: "6px" }}>iPhone Quick Setup</strong>
+                  <ol style={{ fontSize: "12px", color: "var(--text-sub)", lineHeight: 1.6, paddingLeft: "18px", margin: 0 }}>
+                    <li>Ensure your iPhone is connected to the same Wi-Fi network as this PC.</li>
+                    <li>Open your iPhone Camera app and point it at the QR code above (or open the URL in Safari).</li>
+                    <li>In Safari, tap the <strong>Share</strong> icon (box with upward arrow) and select <strong>Add to Home Screen</strong>.</li>
+                    <li>Open the icon on your iPhone home screen to experience the fullscreen Spotify-style mobile player!</li>
+                  </ol>
+                </div>
+              </div>
+            )}
           </section>
         </div>
       )}

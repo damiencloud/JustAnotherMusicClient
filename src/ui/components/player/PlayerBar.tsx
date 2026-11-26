@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { IconPlayerPlay, IconPlaylist } from "@tabler/icons-react";
+import { IconDeviceMobile, IconPlayerPlay, IconPlaylist } from "@tabler/icons-react";
 import { tauriFetch } from "../../../datasource/youtube/tauriFetch";
 import { TrackInfo } from "./TrackInfo";
 import { PlaybackControls } from "./PlaybackControls";
@@ -15,6 +15,8 @@ interface PlayerBarProps {
   isQueueOpen: boolean;
   onConnectionRestored: () => Promise<void>;
   handlePlayerBarClick:()=>void;
+  onToggleRemoteControl?: () => void;
+  isRemoteControlOpen?: boolean;
 }
 
 const CONNECTION_CHECK_URLS = [
@@ -22,7 +24,15 @@ const CONNECTION_CHECK_URLS = [
   "https://cp.cloudflare.com/generate_204",
 ];
 
-export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnectionRestored,handlePlayerBarClick }: PlayerBarProps) {
+export function PlayerBar({
+  onToggleLyrics,
+  onToggleQueue,
+  isQueueOpen,
+  onConnectionRestored,
+  handlePlayerBarClick,
+  onToggleRemoteControl,
+  isRemoteControlOpen,
+}: PlayerBarProps) {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
  
@@ -180,6 +190,21 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
             >
               <div className={styles.expandedControls}>
                 <LyricsButton onToggle={onToggleLyrics} />
+
+                {onToggleRemoteControl && (
+                  <button
+                    type="button"
+                    className={`${styles.iconButton} ${isRemoteControlOpen ? styles.activeControl : ""}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleRemoteControl();
+                    }}
+                    aria-label={isRemoteControlOpen ? "Close mobile remote" : "Mobile web remote"}
+                    title="Mobile Web Remote (Control via iPhone)"
+                  >
+                    <IconDeviceMobile size={18} />
+                  </button>
+                )}
 
                 <button
                   type="button"

@@ -83,7 +83,11 @@
       "lastfm_disconnect",
       "lastfm_get_session",
       "lastfm_scrobble",
-      "lastfm_update_now_playing"
+      "lastfm_update_now_playing",
+      "remote_server_get_status",
+      "remote_server_set_enabled",
+      "remote_server_update_state",
+      "remote_server_set_search_results"
     ]
   }
 }

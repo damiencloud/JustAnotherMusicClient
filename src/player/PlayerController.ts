@@ -427,6 +427,25 @@ export class PlayerController {
     });
   }
 
+  addTracksToQueue(tracks: Track[]): void {
+    for (const track of tracks) {
+      this.queue.add(track);
+    }
+    this.emit();
+    logInternalInfo("PlayerController.addTracksToQueue", { count: tracks.length });
+  }
+
+  clearQueue(): void {
+    const current = this.queue.current;
+    if (current) {
+      this.queue.set([current], 0, 0);
+    } else {
+      this.queue.set([], -1, 0);
+    }
+    this.emit();
+    logInternalInfo("PlayerController.clearQueue", {});
+  }
+
   playNext(track: Track): void {
     this.queue.playNext(track);
     this.emit();

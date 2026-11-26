@@ -1,0 +1,60 @@
+name: Build Portable Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-portable:
+    name: Build Portable EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri standalone executable
+        run: npx tauri build --no-bundle
+
+      - name: Upload portable executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Just-Another-Music-Client-Windows-portable
+          path: src-tauri/target/release/just-another-music-client.exe
+          if-no-files-found: error
+
+      - name: Create Private Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "JustAnotherMusicClient Portable (v1.3.2-remote)"
+          tag_name: "v1.3.2-portable-${{ github.run_number }}"
+          draft: true
+          prerelease: false
+          files: |
+            src-tauri/target/release/just-another-music-client.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,6 +15,8 @@ import { PlaylistContextMenuProvider } from "./components/PlaylistContextMenu";
 import { ArtistNavigationProvider } from "./components/ArtistLinks";
 import { TitleBar } from "./components/TitleBar";
 import { PlayerBar } from "./components/player/PlayerBar";
+import { RemoteControlModal } from "./components/remote/RemoteControlModal";
+import { useRemoteServer } from "../player/useRemoteServer";
 import { QueuePanel } from "./components/player/QueuePanel";
 import { Layout } from "./components/Layout";
 import type { Tab, TabViewState } from "./types/tab";
@@ -284,7 +286,9 @@ export default function App() {
   }, []);
   const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const [releaseChangelog, setReleaseChangelog] = useState<ReleaseChangelog | null>(null);
-  const [isExpandedPlayerBar,setIsExpandedPlayerBar]=  useState(false)
+  const [isExpandedPlayerBar,setIsExpandedPlayerBar]=  useState(false);
+  const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
+  const { serverInfo } = useRemoteServer();
   const dismissAvailableUpdate = useCallback(() => {
     setAvailableUpdate(null);
   }, []);
@@ -1784,6 +1788,13 @@ useEffect(() => {
         isQueueOpen={isQueuePanelOpen}
         onConnectionRestored={handleConnectionRestored}
         handlePlayerBarClick={handlePlayerBarClick}
+        onToggleRemoteControl={() => setIsRemoteModalOpen(!isRemoteModalOpen)}
+        isRemoteControlOpen={isRemoteModalOpen}
+      />
+      <RemoteControlModal
+        isOpen={isRemoteModalOpen}
+        onClose={() => setIsRemoteModalOpen(false)}
+        serverInfo={serverInfo}
       />
       <SearchOverlay
         isOpen={isSearchOpen && activeTab?.view !== "settings"}

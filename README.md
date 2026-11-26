@@ -70,6 +70,7 @@ If you like this project, **starring it on Github** would help A LOT!
 | Last FM | Last FM integration to track listening |
 | Mini player | Small Mini Music player when you tab out of the app that can be moved with either right mouse or dragging |
 | Synced Lyrics | Real-time synced lyrics, not even available on the official client |
+| Mobile Web Remote | Control music from your iPhone or any mobile browser just like Spotify Mobile (album art ambient blur, scrubber, volume, queue, and live search) via instant QR code |
 | YouTube Music Integration | Browse, search, like songs, and play music via an integrated search bar |
 | Account Support | Sign in to access your library, playlists, recommendations, and other account features |
 | Song Management | Add songs to playlists or queue, view your queue, quickly via Ctrl+S or right-click |
@@ -179,6 +180,18 @@ npm install
 
 ```powershell
 npm run tauri dev
+```
+
+### Mobile Web Remote (Control via iPhone)
+
+To control playback from your iPhone like Spotify Mobile:
+1. Ensure your iPhone and PC are connected to the same Wi-Fi network.
+2. Click the **Mobile Remote** button in the player bar or navigate to **Settings > Remote**.
+3. Scan the displayed **QR Code** using your iPhone Camera (or open `http://<your-pc-ip>:9863` in Safari).
+4. *(Optional)* In Safari, tap **Share** > **Add to Home Screen** for a fullscreen, native-feeling Spotify Mobile remote.
+5. If running without Tauri in dev mode, start the remote bridge with:
+```powershell
+npm run remote
 ```
 
 ### Build

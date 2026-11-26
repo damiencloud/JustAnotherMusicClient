@@ -48,6 +48,7 @@ mod windows_media;
 
 mod discord_rpc;
 mod lastfm;
+mod remote_server;
 
 // Keep the legacy service name so existing sign-in credentials survive the product rename.
 const KEYRING_SERVICE: &str = "com.ytmusicdock.app";
@@ -3367,6 +3368,8 @@ pub fn run() {
                 std::eprintln!("[internal][tauri][warn] {}", error.message);
             }
 
+            let _ = remote_server::get_or_init_remote_server(app.handle());
+
             let tray_menu = MenuBuilder::new(app)
                 .text(TRAY_MENU_SHOW_ID, "Show")
                 .separator()
@@ -3494,6 +3497,10 @@ pub fn run() {
             lastfm::lastfm_update_now_playing,
             discord_rpc_update,
             discord_rpc_clear,
+            remote_server::remote_server_get_status,
+            remote_server::remote_server_set_enabled,
+            remote_server::remote_server_update_state,
+            remote_server::remote_server_set_search_results,
             #[cfg(target_os = "macos")]
             macos_media::update_macos_media_session,
             #[cfg(target_os = "windows")]
