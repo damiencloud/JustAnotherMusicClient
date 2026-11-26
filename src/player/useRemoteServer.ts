@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { playerController, tabManager, searchController } from "./playerStore";
+import { playerController, tabManager, searchController, libraryController } from "./playerStore";
 import { useRemoteControlEnabled, useRemoteControlPort } from "../ui/settings/remoteControl";
 import { logInternalDebug, logInternalWarn } from "../internal/logging";
 import type { Track } from "../datasource/types";
@@ -36,6 +36,7 @@ export function useRemoteServer() {
   });
 
   const lastSyncedStateRef = useRef<string>("");
+  const skipInProgressRef = useRef<boolean>(false);
 
   // 1. Fetch server info on mount and when port/enabled changes
   useEffect(() => {
@@ -82,16 +83,50 @@ export function useRemoteServer() {
             await playerController.play();
             break;
           case "pause":
-            playerController.pause();
+            try {
+              await playerController.pause();
+            } catch {}
+            try {
+              await tabManager.getActivePlayer().pause();
+            } catch {}
             break;
-          case "togglePlayPause":
-            await playerController.togglePlayPause();
+          case "togglePlayPause": {
+            const isPlaying = tabManager.getActiveState().status === "playing";
+            if (isPlaying) {
+              try {
+                await playerController.pause();
+              } catch {}
+              try {
+                await tabManager.getActivePlayer().pause();
+              } catch {}
+            } else {
+              try {
+                await playerController.play();
+              } catch {}
+            }
             break;
+          }
           case "skipToNext":
-            await playerController.skipToNext();
+            if (skipInProgressRef.current) break;
+            skipInProgressRef.current = true;
+            try {
+              await playerController.skipToNext();
+            } finally {
+              setTimeout(() => {
+                skipInProgressRef.current = false;
+              }, 350);
+            }
             break;
           case "skipToPrevious":
-            await playerController.skipToPrevious();
+            if (skipInProgressRef.current) break;
+            skipInProgressRef.current = true;
+            try {
+              await playerController.skipToPrevious();
+            } finally {
+              setTimeout(() => {
+                skipInProgressRef.current = false;
+              }, 350);
+            }
             break;
           case "seek":
             if (typeof payload.time === "number") {
@@ -132,6 +167,18 @@ export function useRemoteServer() {
           case "queuePlaylist":
             if (payload.tracks && payload.tracks.length > 0) {
               playerController.addTracksToQueue(payload.tracks);
+            } else if (payload.playlistId) {
+              const lib = libraryController.getState().library;
+              if (payload.playlistId === "LM" || payload.playlistId === "liked") {
+                const tracks = lib?.likedSongs || [];
+                if (tracks.length > 0) playerController.addTracksToQueue(tracks);
+              } else {
+                const p = lib?.playlists?.find((pl) => pl.id === payload.playlistId);
+                if (p) {
+                  const tracks = await libraryController.getPlaylistTracks(p);
+                  if (tracks.length > 0) playerController.addTracksToQueue(tracks);
+                }
+              }
             }
             break;
           case "clearQueue":
@@ -140,6 +187,18 @@ export function useRemoteServer() {
           case "playPlaylist":
             if (payload.tracks && payload.tracks.length > 0) {
               await playerController.playTrackById(payload.tracks[0].id, payload.tracks);
+            } else if (payload.playlistId) {
+              const lib = libraryController.getState().library;
+              if (payload.playlistId === "LM" || payload.playlistId === "liked") {
+                const tracks = lib?.likedSongs || [];
+                if (tracks.length > 0) await playerController.playTrackById(tracks[0].id, tracks);
+              } else {
+                const p = lib?.playlists?.find((pl) => pl.id === payload.playlistId);
+                if (p) {
+                  const tracks = await libraryController.getPlaylistTracks(p);
+                  if (tracks.length > 0) await playerController.playTrackById(tracks[0].id, tracks);
+                }
+              }
             } else if (payload.videoId) {
               await playerController.playTrackById(payload.videoId);
             }
@@ -175,9 +234,43 @@ export function useRemoteServer() {
         }
       );
 
+      // Listen to playlist track requests from mobile
+      const unlistenPlaylistTracks = listen<{ id: string }>(
+        "remote-control:get-playlist-tracks",
+        async ({ payload }) => {
+          if (!payload.id) return;
+          try {
+            const lib = libraryController.getState().library;
+            let tracks: Track[] = [];
+            if (payload.id === "LM" || payload.id === "liked") {
+              tracks = lib?.likedSongs || [];
+            } else {
+              const p = lib?.playlists?.find((pl) => pl.id === payload.id);
+              if (p) {
+                tracks = await libraryController.getPlaylistTracks(p);
+              }
+            }
+            await invoke("remote_server_set_playlist_tracks", {
+              tracks: {
+                tracks: tracks.map((t) => ({
+                  id: t.id,
+                  title: t.title,
+                  artist: t.artist,
+                  artworkUrl: t.artworkUrl,
+                  durationSec: t.durationSec,
+                })),
+              },
+            });
+          } catch (err) {
+            logInternalWarn("Error handling remote playlist tracks query", { error: String(err) });
+          }
+        }
+      );
+
       return () => {
         unlistenPromise.then((fn) => fn());
         unlistenSearch.then((fn) => fn());
+        unlistenPlaylistTracks.then((fn) => fn());
       };
     } else {
       // In web browser dev mode, connect to the local Node server's SSE action stream
@@ -291,6 +384,52 @@ export function useRemoteServer() {
       clearInterval(timer);
     };
   }, [enabled, port]);
+
+  // 4. Sync desktop library playlists to remote server
+  useEffect(() => {
+    if (!enabled) return;
+
+    async function syncPlaylists() {
+      try {
+        const lib = libraryController.getState().library;
+        const list: Array<{ id: string; title: string; author: string; itemCount: string; artworkUrl?: string }> = [];
+        if (lib?.likedSongsPlaylist) {
+          list.push({
+            id: lib.likedSongsPlaylist.id || "LM",
+            title: lib.likedSongsPlaylist.title || "Liked Songs",
+            author: "Your Library",
+            itemCount: `${lib.likedSongs?.length || 0} tracks`,
+            artworkUrl: lib.likedSongsPlaylist.artworkUrl || "/icon.png",
+          });
+        }
+        if (lib?.playlists) {
+          for (const p of lib.playlists) {
+            list.push({
+              id: p.id,
+              title: p.title,
+              author: p.owner || "Playlist",
+              itemCount: "Playlist",
+              artworkUrl: p.artworkUrl || "/icon.png",
+            });
+          }
+        }
+        if (isTauri()) {
+          await invoke("remote_server_set_playlists", { playlists: { playlists: list } });
+        }
+      } catch (err) {
+        logInternalWarn("Failed to sync playlists to remote server", { error: String(err) });
+      }
+    }
+
+    void syncPlaylists();
+    const unsubLib = libraryController.subscribe(() => {
+      void syncPlaylists();
+    });
+
+    return () => {
+      unsubLib();
+    };
+  }, [enabled]);
 
   return { serverInfo };
 }

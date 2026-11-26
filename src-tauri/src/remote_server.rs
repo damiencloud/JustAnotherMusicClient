@@ -73,7 +73,11 @@ pub struct RemoteActionPayload {
     #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
-    pub track: Option<RemoteTrack>,
+    pub track: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tracks: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub playlist_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -92,6 +96,8 @@ pub struct RemoteServer {
     port: Arc<Mutex<u16>>,
     enabled: Arc<Mutex<bool>>,
     search_results: Arc<Mutex<Option<serde_json::Value>>>,
+    playlists: Arc<Mutex<serde_json::Value>>,
+    playlist_tracks: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl RemoteServer {
@@ -103,6 +109,8 @@ impl RemoteServer {
             port: Arc::new(Mutex::new(port)),
             enabled: Arc::new(Mutex::new(true)),
             search_results: Arc::new(Mutex::new(None)),
+            playlists: Arc::new(Mutex::new(serde_json::json!({ "playlists": [] }))),
+            playlist_tracks: Arc::new(Mutex::new(None)),
         });
 
         let server_clone = Arc::clone(&server);
@@ -155,8 +163,10 @@ impl RemoteServer {
                     let clients = Arc::clone(&self.clients);
                     let app = self.app.clone();
                     let search_results = Arc::clone(&self.search_results);
+                    let playlists = Arc::clone(&self.playlists);
+                    let playlist_tracks = Arc::clone(&self.playlist_tracks);
                     thread::spawn(move || {
-                        handle_connection(stream, state, clients, app, search_results);
+                        handle_connection(stream, state, clients, app, search_results, playlists, playlist_tracks);
                     });
                 }
                 Err(err) => {
@@ -186,6 +196,18 @@ impl RemoteServer {
     pub fn set_search_results(&self, results: serde_json::Value) {
         if let Ok(mut lock) = self.search_results.lock() {
             *lock = Some(results);
+        }
+    }
+
+    pub fn set_playlists(&self, playlists: serde_json::Value) {
+        if let Ok(mut lock) = self.playlists.lock() {
+            *lock = playlists;
+        }
+    }
+
+    pub fn set_playlist_tracks(&self, tracks: serde_json::Value) {
+        if let Ok(mut lock) = self.playlist_tracks.lock() {
+            *lock = Some(tracks);
         }
     }
 
@@ -244,6 +266,8 @@ fn handle_connection(
     clients: Arc<Mutex<Vec<TcpStream>>>,
     app: AppHandle,
     search_results: Arc<Mutex<Option<serde_json::Value>>>,
+    playlists: Arc<Mutex<serde_json::Value>>,
+    playlist_tracks: Arc<Mutex<Option<serde_json::Value>>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut buffer = [0u8; 8192];
@@ -412,6 +436,70 @@ Connection: close\r\n\r\n",
             let _ = stream.write_all(body_bytes);
             return;
         }
+
+        if path == "/api/playlists" {
+            let current = playlists.lock().map(|p| p.clone()).unwrap_or_else(|_| serde_json::json!({ "playlists": [] }));
+            let json = serde_json::to_string(&current).unwrap_or_else(|_| "{\"playlists\":[]}".to_string());
+            let json_bytes = json.as_bytes();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\n\
+Content-Type: application/json; charset=utf-8\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Length: {}\r\n\
+Connection: close\r\n\
+Cache-Control: no-cache, no-store\r\n\r\n",
+                json_bytes.len()
+            );
+            let _ = stream.write_all(headers.as_bytes());
+            let _ = stream.write_all(json_bytes);
+            return;
+        }
+
+        if path == "/api/playlist-tracks" {
+            let pid = raw_path
+                .split('?')
+                .nth(1)
+                .and_then(|qs| {
+                    qs.split('&').find_map(|pair| {
+                        let mut p = pair.split('=');
+                        if p.next() == Some("id") {
+                            p.next()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .map(|q| urlencoding_decode(q))
+                .unwrap_or_default();
+
+            let _ = app.emit("remote-control:get-playlist-tracks", serde_json::json!({ "id": pid }));
+
+            let mut tracks_json = serde_json::json!({ "tracks": [] });
+            for _ in 0..15 {
+                thread::sleep(Duration::from_millis(100));
+                if let Ok(mut guard) = playlist_tracks.lock() {
+                    if let Some(res) = guard.take() {
+                        tracks_json = res;
+                        break;
+                    }
+                }
+            }
+
+            let body = tracks_json.to_string();
+            let body_bytes = body.as_bytes();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\n\
+Content-Type: application/json; charset=utf-8\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Length: {}\r\n\
+Connection: close\r\n\
+Cache-Control: no-cache, no-store\r\n\r\n",
+                body_bytes.len()
+            );
+            let _ = stream.write_all(headers.as_bytes());
+            let _ = stream.write_all(body_bytes);
+            return;
+        }
     }
 
     if method == "POST" && path == "/api/action" {
@@ -482,5 +570,19 @@ pub fn remote_server_update_state(app: AppHandle, state: RemotePlaybackState) ->
 pub fn remote_server_set_search_results(app: AppHandle, results: serde_json::Value) -> Result<(), String> {
     let server = get_or_init_remote_server(&app);
     server.set_search_results(results);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remote_server_set_playlists(app: AppHandle, playlists: serde_json::Value) -> Result<(), String> {
+    let server = get_or_init_remote_server(&app);
+    server.set_playlists(playlists);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remote_server_set_playlist_tracks(app: AppHandle, tracks: serde_json::Value) -> Result<(), String> {
+    let server = get_or_init_remote_server(&app);
+    server.set_playlist_tracks(tracks);
     Ok(())
 }

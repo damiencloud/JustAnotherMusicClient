@@ -3501,6 +3501,8 @@ pub fn run() {
             remote_server::remote_server_set_enabled,
             remote_server::remote_server_update_state,
             remote_server::remote_server_set_search_results,
+            remote_server::remote_server_set_playlists,
+            remote_server::remote_server_set_playlist_tracks,
             #[cfg(target_os = "macos")]
             macos_media::update_macos_media_session,
             #[cfg(target_os = "windows")]
