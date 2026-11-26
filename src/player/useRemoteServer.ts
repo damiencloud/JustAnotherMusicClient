@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { playerController, tabManager, searchController, libraryController } from "./playerStore";
@@ -37,6 +37,80 @@ export function useRemoteServer() {
 
   const lastSyncedStateRef = useRef<string>("");
   const skipInProgressRef = useRef<boolean>(false);
+
+  const buildCurrentState = useCallback(() => {
+    const activeState = tabManager.getActiveState();
+    const activeSession = tabManager.getActiveSession();
+    const track = activeState.currentTrack;
+    const rawDuration = playerController.getDuration();
+    const rawCurrentTime = playerController.getCurrentTime();
+    const rawVolume = playerController.getVolume();
+    const duration = Number.isFinite(rawDuration) && rawDuration > 0
+      ? rawDuration
+      : (track?.durationSec && Number.isFinite(track.durationSec) ? track.durationSec : 0);
+    const currentTime = Number.isFinite(rawCurrentTime) && rawCurrentTime >= 0 ? rawCurrentTime : 0;
+    const volume = Number.isFinite(rawVolume) && rawVolume >= 0 ? rawVolume : 1.0;
+    const fullQueue = activeSession?.queue || [];
+    const queueIndex = activeSession?.queueIndex || 0;
+
+    // Window queue to upcoming 60 tracks starting from current queue index to keep SSE payload small and fast (<5KB instead of 200KB+)
+    const windowStart = Math.max(0, queueIndex);
+    const slicedQueue = fullQueue.slice(windowStart, windowStart + 60).map((t, offset) => ({
+      id: t.id,
+      title: t.title,
+      artist: t.artist,
+      artworkUrl: t.artworkUrl,
+      durationSec: t.durationSec,
+      originalIndex: windowStart + offset,
+    }));
+
+    return {
+      status: activeState.status || "idle",
+      currentTrack: track
+        ? {
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            artworkUrl: track.artworkUrl,
+            durationSec: track.durationSec,
+          }
+        : null,
+      currentTime,
+      duration,
+      volume,
+      muted: playerController.isMuted() || false,
+      playbackOrderMode: activeState.playbackOrderMode || "in-order",
+      queue: slicedQueue,
+      queueIndex,
+      queueTotal: fullQueue.length,
+    };
+  }, []);
+
+  const syncState = useCallback(async (force = false) => {
+    const payload = buildCurrentState();
+    const key = `${payload.status}:${payload.currentTrack?.id}:${Math.floor(payload.currentTime)}:${payload.volume}:${payload.muted}:${payload.playbackOrderMode}:${payload.queueTotal}:${payload.queueIndex}`;
+
+    if (!force && key === lastSyncedStateRef.current) return;
+    lastSyncedStateRef.current = key;
+
+    if (isTauri()) {
+      try {
+        await invoke("remote_server_update_state", { state: payload });
+      } catch (err) {
+        logInternalWarn("remote_server_update_state failed", { error: String(err) });
+      }
+    } else {
+      try {
+        await fetch(`http://localhost:${port}/api/update-state`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        // Server might not be up
+      }
+    }
+  }, [buildCurrentState, port]);
 
   // 1. Fetch server info on mount and when port/enabled changes
   useEffect(() => {
@@ -154,22 +228,29 @@ export function useRemoteServer() {
               playerController.removeFromQueueAt(payload.index);
             }
             break;
-          case "playTrack":
+          case "playTrack": {
             if (payload.videoId) {
-              await playerController.playTrackById(payload.videoId);
+              const queue = payload.tracks && payload.tracks.length > 0
+                ? payload.tracks
+                : payload.track
+                ? [payload.track]
+                : undefined;
+              await playerController.playTrackById(payload.videoId, queue);
             }
             break;
+          }
           case "addToQueue":
             if (payload.track) {
               playerController.addToQueue(payload.track);
             }
             break;
-          case "queuePlaylist":
+          case "queuePlaylist": {
             if (payload.tracks && payload.tracks.length > 0) {
               playerController.addTracksToQueue(payload.tracks);
             } else if (payload.playlistId) {
               const lib = libraryController.getState().library;
-              if (payload.playlistId === "LM" || payload.playlistId === "liked") {
+              const isLiked = payload.playlistId === "LM" || payload.playlistId === "liked" || payload.playlistId === lib?.likedSongsPlaylist?.id;
+              if (isLiked) {
                 const tracks = lib?.likedSongs || [];
                 if (tracks.length > 0) playerController.addTracksToQueue(tracks);
               } else {
@@ -181,31 +262,45 @@ export function useRemoteServer() {
               }
             }
             break;
+          }
           case "clearQueue":
             playerController.clearQueue();
             break;
-          case "playPlaylist":
-            if (payload.tracks && payload.tracks.length > 0) {
-              await playerController.playTrackById(payload.tracks[0].id, payload.tracks);
+          case "playPlaylist": {
+            const startVideoId = payload.videoId || (payload.tracks && payload.tracks[0]?.id) || payload.track?.id;
+            if (payload.tracks && payload.tracks.length > 0 && startVideoId) {
+              await playerController.playTrackById(startVideoId, payload.tracks);
             } else if (payload.playlistId) {
               const lib = libraryController.getState().library;
-              if (payload.playlistId === "LM" || payload.playlistId === "liked") {
+              const isLiked = payload.playlistId === "LM" || payload.playlistId === "liked" || payload.playlistId === lib?.likedSongsPlaylist?.id;
+              if (isLiked) {
                 const tracks = lib?.likedSongs || [];
-                if (tracks.length > 0) await playerController.playTrackById(tracks[0].id, tracks);
+                if (tracks.length > 0) {
+                  const id = startVideoId || tracks[0].id;
+                  await playerController.playTrackById(id, tracks);
+                }
               } else {
                 const p = lib?.playlists?.find((pl) => pl.id === payload.playlistId);
                 if (p) {
                   const tracks = await libraryController.getPlaylistTracks(p);
-                  if (tracks.length > 0) await playerController.playTrackById(tracks[0].id, tracks);
+                  if (tracks.length > 0) {
+                    const id = startVideoId || tracks[0].id;
+                    await playerController.playTrackById(id, tracks);
+                  }
                 }
               }
-            } else if (payload.videoId) {
-              await playerController.playTrackById(payload.videoId);
+            } else if (startVideoId) {
+              await playerController.playTrackById(startVideoId, payload.track ? [payload.track] : undefined);
             }
             break;
+          }
         }
       } catch (err) {
         logInternalWarn("Error executing remote control action", { error: String(err) });
+      } finally {
+        setTimeout(() => {
+          void syncState(true);
+        }, 80);
       }
     };
 
@@ -295,74 +390,6 @@ export function useRemoteServer() {
   useEffect(() => {
     if (!enabled) return;
 
-    function buildCurrentState() {
-      const activeState = tabManager.getActiveState();
-      const activeSession = tabManager.getActiveSession();
-      const track = activeState.currentTrack;
-      const duration = playerController.getDuration() || track?.durationSec || 0;
-      const currentTime = playerController.getCurrentTime() || 0;
-      const fullQueue = activeSession?.queue || [];
-      const queueIndex = activeSession?.queueIndex || 0;
-
-      // Window queue to upcoming 60 tracks starting from current queue index to keep SSE payload small and fast (<5KB instead of 200KB+)
-      const windowStart = Math.max(0, queueIndex);
-      const slicedQueue = fullQueue.slice(windowStart, windowStart + 60).map((t, offset) => ({
-        id: t.id,
-        title: t.title,
-        artist: t.artist,
-        artworkUrl: t.artworkUrl,
-        durationSec: t.durationSec,
-        originalIndex: windowStart + offset,
-      }));
-
-      return {
-        status: activeState.status,
-        currentTrack: track
-          ? {
-              id: track.id,
-              title: track.title,
-              artist: track.artist,
-              artworkUrl: track.artworkUrl,
-              durationSec: track.durationSec,
-            }
-          : null,
-        currentTime,
-        duration,
-        volume: playerController.getVolume(),
-        muted: playerController.isMuted(),
-        playbackOrderMode: activeState.playbackOrderMode || "in-order",
-        queue: slicedQueue,
-        queueIndex,
-        queueTotal: fullQueue.length,
-      };
-    }
-
-    async function syncState(force = false) {
-      const payload = buildCurrentState();
-      const key = `${payload.status}:${payload.currentTrack?.id}:${Math.floor(payload.currentTime)}:${payload.volume}:${payload.muted}:${payload.playbackOrderMode}:${payload.queueTotal}:${payload.queueIndex}`;
-
-      if (!force && key === lastSyncedStateRef.current) return;
-      lastSyncedStateRef.current = key;
-
-      if (isTauri()) {
-        try {
-          await invoke("remote_server_update_state", { state: payload });
-        } catch {
-          // Ignore
-        }
-      } else {
-        try {
-          await fetch(`http://localhost:${port}/api/update-state`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-        } catch {
-          // Server might not be up
-        }
-      }
-    }
-
     // Sync on tabManager change
     const unsubscribe = tabManager.subscribe(() => {
       void syncState(true);
@@ -383,7 +410,7 @@ export function useRemoteServer() {
       unsubscribe();
       clearInterval(timer);
     };
-  }, [enabled, port]);
+  }, [enabled, syncState]);
 
   // 4. Sync desktop library playlists to remote server
   useEffect(() => {

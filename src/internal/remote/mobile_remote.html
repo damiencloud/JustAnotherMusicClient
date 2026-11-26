@@ -2290,6 +2290,20 @@
             try { if (item) track = JSON.parse(item.getAttribute("data-track")); } catch {}
             sendAction("playTrack", { videoId, track });
             showToast("Playing on Desktop");
+            if (track) {
+              if (trackTitle) trackTitle.textContent = track.title || "Loading...";
+              if (trackArtist) trackArtist.textContent = track.artist || "";
+              if (track.artworkUrl && trackArtwork) {
+                trackArtwork.src = track.artworkUrl;
+                trackArtwork.style.display = "block";
+                if (artworkPlaceholder) artworkPlaceholder.style.display = "none";
+                if (ambientBg) ambientBg.style.backgroundImage = `url("${track.artworkUrl}")`;
+              }
+              const idleQuickPlay = document.getElementById("idleQuickPlay");
+              const artworkSection = document.getElementById("artworkSection");
+              if (idleQuickPlay) idleQuickPlay.style.display = "none";
+              if (artworkSection) artworkSection.style.display = "flex";
+            }
             switchTab("playerTab");
             return;
           }
@@ -2398,6 +2412,21 @@
               playAllBtn.addEventListener("click", () => {
                 sendAction("playPlaylist", { playlistId: pid, title: ptitle, tracks });
                 showToast(`Playing "${ptitle}" on PC`);
+                if (tracks && tracks.length > 0) {
+                  const first = tracks[0];
+                  if (trackTitle) trackTitle.textContent = first.title || "Loading...";
+                  if (trackArtist) trackArtist.textContent = first.artist || "";
+                  if (first.artworkUrl && trackArtwork) {
+                    trackArtwork.src = first.artworkUrl;
+                    trackArtwork.style.display = "block";
+                    if (artworkPlaceholder) artworkPlaceholder.style.display = "none";
+                    if (ambientBg) ambientBg.style.backgroundImage = `url("${first.artworkUrl}")`;
+                  }
+                  const idleQuickPlay = document.getElementById("idleQuickPlay");
+                  const artworkSection = document.getElementById("artworkSection");
+                  if (idleQuickPlay) idleQuickPlay.style.display = "none";
+                  if (artworkSection) artworkSection.style.display = "flex";
+                }
                 switchTab("playerTab");
               });
             }
@@ -2423,6 +2452,12 @@
               const ptitle = playBadge.getAttribute("data-playlist-title");
               sendAction("playPlaylist", { playlistId: pid, title: ptitle });
               showToast(`Playing "${ptitle}" on PC`);
+              if (trackTitle) trackTitle.textContent = ptitle || "Loading...";
+              if (trackArtist) trackArtist.textContent = "Playlist";
+              const idleQuickPlay = document.getElementById("idleQuickPlay");
+              const artworkSection = document.getElementById("artworkSection");
+              if (idleQuickPlay) idleQuickPlay.style.display = "none";
+              if (artworkSection) artworkSection.style.display = "flex";
               switchTab("playerTab");
               return;
             }
@@ -2450,6 +2485,18 @@
                   const track = JSON.parse(item.getAttribute("data-track"));
                   sendAction("playTrack", { videoId: track.id, track });
                   showToast(`Playing "${track.title}" on PC`);
+                  if (trackTitle) trackTitle.textContent = track.title || "Loading...";
+                  if (trackArtist) trackArtist.textContent = track.artist || "";
+                  if (track.artworkUrl && trackArtwork) {
+                    trackArtwork.src = track.artworkUrl;
+                    trackArtwork.style.display = "block";
+                    if (artworkPlaceholder) artworkPlaceholder.style.display = "none";
+                    if (ambientBg) ambientBg.style.backgroundImage = `url("${track.artworkUrl}")`;
+                  }
+                  const idleQuickPlay = document.getElementById("idleQuickPlay");
+                  const artworkSection = document.getElementById("artworkSection");
+                  if (idleQuickPlay) idleQuickPlay.style.display = "none";
+                  if (artworkSection) artworkSection.style.display = "flex";
                   switchTab("playerTab");
                   return;
                 } catch {}

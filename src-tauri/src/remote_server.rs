@@ -26,12 +26,19 @@ pub struct RemoteTrack {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePlaybackState {
+    #[serde(default = "default_status")]
     pub status: String,
+    #[serde(default)]
     pub current_track: Option<serde_json::Value>,
-    pub current_time: f64,
-    pub duration: f64,
-    pub volume: f64,
-    pub muted: bool,
+    #[serde(default)]
+    pub current_time: Option<f64>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub volume: Option<f64>,
+    #[serde(default)]
+    pub muted: Option<bool>,
+    #[serde(default = "default_order_mode")]
     pub playback_order_mode: String,
     #[serde(default)]
     pub queue: Vec<serde_json::Value>,
@@ -41,19 +48,44 @@ pub struct RemotePlaybackState {
     pub queue_total: Option<usize>,
 }
 
+fn default_status() -> String {
+    "idle".to_string()
+}
+
+fn default_order_mode() -> String {
+    "in-order".to_string()
+}
+
 impl Default for RemotePlaybackState {
     fn default() -> Self {
         Self {
             status: "idle".to_string(),
             current_track: None,
-            current_time: 0.0,
-            duration: 0.0,
-            volume: 1.0,
-            muted: false,
+            current_time: Some(0.0),
+            duration: Some(0.0),
+            volume: Some(1.0),
+            muted: Some(false),
             playback_order_mode: "in-order".to_string(),
             queue: Vec::new(),
             queue_index: 0,
             queue_total: None,
+        }
+    }
+}
+
+impl RemotePlaybackState {
+    pub fn sanitize(&mut self) {
+        if self.current_time.is_none() {
+            self.current_time = Some(0.0);
+        }
+        if self.duration.is_none() {
+            self.duration = Some(0.0);
+        }
+        if self.volume.is_none() {
+            self.volume = Some(1.0);
+        }
+        if self.muted.is_none() {
+            self.muted = Some(false);
         }
     }
 }
@@ -176,7 +208,8 @@ impl RemoteServer {
         }
     }
 
-    pub fn update_state(&self, new_state: RemotePlaybackState) {
+    pub fn update_state(&self, mut new_state: RemotePlaybackState) {
+        new_state.sanitize();
         if let Ok(mut current) = self.state.lock() {
             *current = new_state.clone();
         }
@@ -270,13 +303,56 @@ fn handle_connection(
     playlist_tracks: Arc<Mutex<Option<serde_json::Value>>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let mut buffer = [0u8; 8192];
-    let read_len = match stream.read(&mut buffer) {
-        Ok(n) if n > 0 => n,
-        _ => return,
-    };
+    let mut data = Vec::with_capacity(8192);
+    let mut buf = [0u8; 4096];
+    let mut content_length: Option<usize> = None;
+    let mut header_end_idx: Option<usize> = None;
 
-    let request_str = String::from_utf8_lossy(&buffer[..read_len]);
+    loop {
+        let n = match stream.read(&mut buf) {
+            Ok(n) if n > 0 => n,
+            _ => break,
+        };
+        data.extend_from_slice(&buf[..n]);
+
+        if header_end_idx.is_none() {
+            if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end_idx = Some(pos + 4);
+                let header_str = String::from_utf8_lossy(&data[..pos]);
+                for line in header_str.lines() {
+                    let lower = line.to_ascii_lowercase();
+                    if lower.starts_with("content-length:") {
+                        if let Some(val) = line.split(':').nth(1) {
+                            content_length = val.trim().parse::<usize>().ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(hend) = header_end_idx {
+            let clen = content_length.unwrap_or(0);
+            if data.len() >= hend + clen {
+                break;
+            }
+        }
+
+        if data.len() > 2 * 1024 * 1024 {
+            break;
+        }
+    }
+
+    if data.is_empty() {
+        return;
+    }
+
+    let header_end = header_end_idx.unwrap_or(data.len());
+    let request_str = String::from_utf8_lossy(&data[..header_end]);
+    let body_bytes = if header_end < data.len() {
+        &data[header_end..]
+    } else {
+        &[]
+    };
     let mut lines = request_str.lines();
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
@@ -475,7 +551,7 @@ Cache-Control: no-cache, no-store\r\n\r\n",
             let _ = app.emit("remote-control:get-playlist-tracks", serde_json::json!({ "id": pid }));
 
             let mut tracks_json = serde_json::json!({ "tracks": [] });
-            for _ in 0..15 {
+            for _ in 0..40 {
                 thread::sleep(Duration::from_millis(100));
                 if let Ok(mut guard) = playlist_tracks.lock() {
                     if let Some(res) = guard.take() {
@@ -503,14 +579,7 @@ Cache-Control: no-cache, no-store\r\n\r\n",
     }
 
     if method == "POST" && path == "/api/action" {
-        // Find body after \r\n\r\n
-        let body_str = if let Some(idx) = request_str.find("\r\n\r\n") {
-            &request_str[idx + 4..]
-        } else {
-            ""
-        };
-
-        if let Ok(payload) = serde_json::from_str::<RemoteActionPayload>(body_str) {
+        if let Ok(payload) = serde_json::from_slice::<RemoteActionPayload>(body_bytes) {
             let _ = app.emit(REMOTE_CONTROL_ACTION_EVENT, payload);
             let resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}";
             let _ = stream.write_all(resp);
