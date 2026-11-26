@@ -27,16 +27,18 @@ pub struct RemoteTrack {
 #[serde(rename_all = "camelCase")]
 pub struct RemotePlaybackState {
     pub status: String,
-    pub current_track: Option<RemoteTrack>,
+    pub current_track: Option<serde_json::Value>,
     pub current_time: f64,
     pub duration: f64,
     pub volume: f64,
     pub muted: bool,
     pub playback_order_mode: String,
     #[serde(default)]
-    pub queue: Vec<RemoteTrack>,
+    pub queue: Vec<serde_json::Value>,
     #[serde(default)]
     pub queue_index: usize,
+    #[serde(default)]
+    pub queue_total: Option<usize>,
 }
 
 impl Default for RemotePlaybackState {
@@ -51,6 +53,7 @@ impl Default for RemotePlaybackState {
             playback_order_mode: "in-order".to_string(),
             queue: Vec::new(),
             queue_index: 0,
+            queue_total: None,
         }
     }
 }
@@ -173,7 +176,7 @@ impl RemoteServer {
             let message = format!("event: state\ndata: {}\n\n", json);
             if let Ok(mut clients) = self.clients.lock() {
                 clients.retain_mut(|stream| {
-                    stream.set_write_timeout(Some(Duration::from_millis(500))).ok();
+                    stream.set_write_timeout(Some(Duration::from_millis(2000))).ok();
                     stream.write_all(message.as_bytes()).is_ok()
                 });
             }
@@ -355,7 +358,7 @@ X-Accel-Buffering: no\r\n\r\n";
 
             // Disable timeouts for persistent SSE connection
             let _ = stream.set_read_timeout(None);
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(2000)));
 
             if let Ok(mut list) = clients.lock() {
                 list.push(stream);

@@ -208,6 +208,19 @@ export function useRemoteServer() {
       const track = activeState.currentTrack;
       const duration = playerController.getDuration() || track?.durationSec || 0;
       const currentTime = playerController.getCurrentTime() || 0;
+      const fullQueue = activeSession?.queue || [];
+      const queueIndex = activeSession?.queueIndex || 0;
+
+      // Window queue to upcoming 60 tracks starting from current queue index to keep SSE payload small and fast (<5KB instead of 200KB+)
+      const windowStart = Math.max(0, queueIndex);
+      const slicedQueue = fullQueue.slice(windowStart, windowStart + 60).map((t, offset) => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artworkUrl: t.artworkUrl,
+        durationSec: t.durationSec,
+        originalIndex: windowStart + offset,
+      }));
 
       return {
         status: activeState.status,
@@ -225,20 +238,15 @@ export function useRemoteServer() {
         volume: playerController.getVolume(),
         muted: playerController.isMuted(),
         playbackOrderMode: activeState.playbackOrderMode || "in-order",
-        queue: (activeSession?.queue || []).map((t) => ({
-          id: t.id,
-          title: t.title,
-          artist: t.artist,
-          artworkUrl: t.artworkUrl,
-          durationSec: t.durationSec,
-        })),
-        queueIndex: activeSession?.queueIndex || 0,
+        queue: slicedQueue,
+        queueIndex,
+        queueTotal: fullQueue.length,
       };
     }
 
     async function syncState(force = false) {
       const payload = buildCurrentState();
-      const key = `${payload.status}:${payload.currentTrack?.id}:${Math.floor(payload.currentTime)}:${payload.volume}:${payload.muted}:${payload.playbackOrderMode}:${payload.queue.length}`;
+      const key = `${payload.status}:${payload.currentTrack?.id}:${Math.floor(payload.currentTime)}:${payload.volume}:${payload.muted}:${payload.playbackOrderMode}:${payload.queueTotal}:${payload.queueIndex}`;
 
       if (!force && key === lastSyncedStateRef.current) return;
       lastSyncedStateRef.current = key;

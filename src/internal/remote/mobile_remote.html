@@ -1834,7 +1834,7 @@
           durationLabel.textContent = formatTime(duration);
 
           // Queue
-          renderQueue(state.queue || []);
+          renderQueue(state.queue || [], state.queueTotal || state.queueTotalCount);
         }
 
         function updateOrderModeUi(mode) {
@@ -1850,17 +1850,17 @@
           orderModeBtn.classList.toggle("active", mode === "shuffle" || mode === "repeat-one");
         }
 
-        function renderQueue(queue) {
-          queueCount.textContent = queue.length;
-          if (queue.length > 0) {
+        function renderQueue(queue, totalCount) {
+          const count = (typeof totalCount === "number" && totalCount >= queue.length) ? totalCount : queue.length;
+          queueCount.textContent = count;
+          if (count > 0) {
             queueBadge.style.display = "flex";
-            queueBadge.textContent = queue.length > 99 ? "99+" : queue.length;
+            queueBadge.textContent = count > 99 ? "99+" : count;
           } else {
             queueBadge.style.display = "none";
           }
 
-          if (queue.length === 0) {
-            queueList.innerHTML = `<div class="empty-queue">No tracks queued up.<br>Use Search to add songs!</div>`;
+          if (count === 0 || queue.length === 0) {
             queueList.innerHTML = `
               <div class="empty-queue" style="text-align: center; padding: 35px 16px;">
                 <div style="font-size: 32px; margin-bottom: 8px;">🎵</div>
@@ -1879,17 +1879,27 @@
             return;
           }
 
-          queueList.innerHTML = queue.map((track, idx) => `
-            <div class="queue-item" data-index="${idx}">
-              <img class="queue-item-art" src="${track.artworkUrl || ''}" alt="Art" onerror="this.style.opacity=0">
+          const renderedItems = queue.slice(0, 60);
+          let html = renderedItems.map((track, idx) => {
+            const queueIdx = typeof track.originalIndex === "number" ? track.originalIndex : idx;
+            return `
+            <div class="queue-item" data-index="${queueIdx}">
+              <img class="queue-item-art" src="${track.artworkUrl || '/icon.png'}" alt="Art" onerror="this.src='/icon.png'; this.onerror=null;">
               <div class="queue-item-info">
                 <div class="queue-item-title">${escapeHtml(track.title)}</div>
                 <div class="queue-item-artist">${escapeHtml(track.artist)}</div>
               </div>
               <span class="queue-item-duration">${formatTime(track.durationSec || 0)}</span>
-              <button class="queue-item-remove" data-remove="${idx}" title="Remove">✕</button>
+              <button class="queue-item-remove" data-remove="${queueIdx}" title="Remove">✕</button>
             </div>
-          `).join("");
+            `;
+          }).join("");
+
+          if (count > renderedItems.length) {
+            html += `<div style="text-align: center; padding: 14px; font-size: 12px; color: var(--text-muted);">+ ${count - renderedItems.length} more tracks in desktop queue</div>`;
+          }
+
+          queueList.innerHTML = html;
         }
 
         function escapeHtml(str) {
@@ -2217,15 +2227,11 @@
         });
 
         async function executeSearch(query) {
-          searchResults.innerHTML = `<div style="text-align: center; padding: 40px 10px; color: var(--text-sub);"><div class="eq-bars" style="justify-content: center; height: 24px;"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div><div style="margin-top: 12px;">Searching YouTube Music...</div></div>`;
           searchResults.innerHTML = `<div style="text-align: center; padding: 40px 10px; color: var(--text-sub);"><div class="eq-bars" style="justify-content: center; height: 24px;"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div><div style="margin-top: 12px;">Searching Playlists & YouTube...</div></div>`;
           try {
             const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
             if (!res.ok) throw new Error("Search response error");
             const data = await res.json();
-            const results = data.results || [];
-            if (results.length === 0) {
-              searchResults.innerHTML = `<div style="text-align: center; padding: 40px 10px; color: var(--text-sub);">No songs found for "${escapeHtml(query)}"</div>`;
             const playlists = data.playlists || [];
             const playlistTracks = data.playlistTracks || [];
             const ytResults = data.ytResults || data.results || [];
@@ -2235,12 +2241,6 @@
               return;
             }
 
-            searchResults.innerHTML = results.map(track => `
-              <div class="search-result-item" data-track='${escapeHtml(JSON.stringify(track))}'>
-                <img class="queue-item-art" src="${track.artworkUrl || ''}" alt="Art" onerror="this.style.opacity=0">
-                <div class="queue-item-info">
-                  <div class="queue-item-title">${escapeHtml(track.title)}</div>
-                  <div class="queue-item-artist">${escapeHtml(track.artist)}</div>
             let html = "";
 
             // 1. Playlists
@@ -2263,9 +2263,6 @@
                     `).join("")}
                   </div>
                 </div>
-                <div class="search-result-actions">
-                  <button class="btn-action-small primary" data-play-track="${escapeHtml(track.id)}">Play</button>
-                  <button class="btn-action-small" data-add-queue="${escapeHtml(track.id)}">+ Queue</button>
               `;
             }
 
@@ -2295,8 +2292,6 @@
                     </div>
                   `).join("")}
                 </div>
-              </div>
-            `).join("");
               `;
             }
 
@@ -2356,7 +2351,6 @@
           const playBtn = e.target.closest("[data-play-track]");
           if (playBtn) {
             const videoId = playBtn.getAttribute("data-play-track");
-            sendAction("playTrack", { videoId });
             const item = e.target.closest("[data-track]");
             let track = null;
             try { if (item) track = JSON.parse(item.getAttribute("data-track")); } catch {}
@@ -2375,9 +2369,6 @@
                 sendAction("addToQueue", { track });
                 showToast(`Added "${track.title}" to Queue`);
               } catch {}
-            }
-          }
-        });
             }
           }
         });
@@ -2446,9 +2437,6 @@
             }
 
             playlistsList.innerHTML = `
-              <div style="grid-column: 1 / -1; margin-bottom: 12px;">
-                <button id="playAllPlaylistBtn" class="btn-action-small primary" style="width: 100%; padding: 12px; font-size: 14px; font-weight: 700;">
-                  ▶ Play All (${tracks.length} tracks)
               <div style="grid-column: 1 / -1; display: flex; gap: 10px; margin-bottom: 14px;">
                 <button id="playAllPlaylistBtn" class="btn-action-small primary" style="flex: 1; padding: 12px; font-size: 13px; font-weight: 700;">
                   ▶ Play All (${tracks.length})
@@ -2464,7 +2452,6 @@
                   <div class="queue-item-title">${escapeHtml(t.title)}</div>
                   <div class="queue-item-artist">${escapeHtml(t.artist)}</div>
                 </div>
-                <button class="btn-action-small primary" data-play-track="${escapeHtml(t.id)}">Play</button>
                 <div class="search-result-actions">
                   <button class="btn-action-small primary" data-play-track="${escapeHtml(t.id)}">Play</button>
                   <button class="btn-action-small" data-add-queue="${escapeHtml(t.id)}">+ Queue</button>
@@ -2475,7 +2462,6 @@
             const playAllBtn = document.getElementById("playAllPlaylistBtn");
             if (playAllBtn) {
               playAllBtn.addEventListener("click", () => {
-                sendAction("playPlaylist", { playlistId: pid, title: ptitle });
                 sendAction("playPlaylist", { playlistId: pid, title: ptitle, tracks });
                 showToast(`Playing "${ptitle}" on PC`);
                 switchTab("playerTab");
