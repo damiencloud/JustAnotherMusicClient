@@ -1,4 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { logInternalError } from "./logging";
@@ -14,6 +15,14 @@ const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000;
 export const CUSTOM_FORK_REPO = "damiencloud/JustAnotherMusicClient";
 export const UPSTREAM_REPO = "2latemc/JustAnotherMusicClient";
 
+export interface PatchProgress {
+  stage: "downloading" | "patching" | "relaunching" | "error";
+  downloaded: number;
+  total: number;
+  percent: number;
+  message: string;
+}
+
 export interface CustomUpdateInfo {
   installedVersion: string;
   runId?: number;
@@ -21,6 +30,13 @@ export interface CustomUpdateInfo {
   commitTitle: string;
   updatedAt: string;
   downloadUrl: string;
+  isDirectExe: boolean;
+  releaseTag?: string;
+  isNewer: boolean;
+}
+
+export async function autoPatchExecutable(downloadUrl: string): Promise<void> {
+  return await invoke("auto_patch_portable_exe", { downloadUrl });
 }
 
 export interface UpstreamUpdateInfo {
@@ -36,6 +52,10 @@ export interface UpstreamUpdateInfo {
 export async function checkForCustomUpdates(): Promise<CustomUpdateInfo | null> {
   try {
     const installedVersion = await getVersion();
+    const currentTag =
+      (import.meta.env.VITE_CUSTOM_RELEASE_TAG as string) ||
+      localStorage.getItem("installed_custom_tag") ||
+      "v1.3.2-portable-6";
 
     // Check for published releases first
     try {
@@ -54,12 +74,16 @@ export async function checkForCustomUpdates(): Promise<CustomUpdateInfo | null> 
         };
         const asset = relData.assets?.find((a) => a.name.endsWith(".exe"));
         if (relData.html_url) {
+          const isNewer = Boolean(relData.tag_name && relData.tag_name !== currentTag);
           return {
             installedVersion,
             runUrl: relData.html_url,
             commitTitle: relData.name || relData.tag_name || "Latest Portable Release",
             updatedAt: relData.published_at || relData.created_at || new Date().toISOString(),
             downloadUrl: asset?.browser_download_url || relData.html_url,
+            isDirectExe: Boolean(asset?.browser_download_url),
+            releaseTag: relData.tag_name,
+            isNewer,
           };
         }
       }
@@ -90,6 +114,8 @@ export async function checkForCustomUpdates(): Promise<CustomUpdateInfo | null> 
       commitTitle: run.display_title || "Latest Portable Build",
       updatedAt: run.updated_at,
       downloadUrl: run.html_url,
+      isDirectExe: false,
+      isNewer: true,
     };
   } catch (error) {
     logInternalError("updateChecker.checkForCustomUpdates failed", error);

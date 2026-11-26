@@ -49,6 +49,7 @@ mod windows_media;
 mod discord_rpc;
 mod lastfm;
 mod remote_server;
+mod auto_patch;
 
 // Keep the legacy service name so existing sign-in credentials survive the product rename.
 const KEYRING_SERVICE: &str = "com.ytmusicdock.app";
@@ -3364,6 +3365,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            auto_patch::cleanup_old_executables();
             if let Err(error) = initialize_app_log(app.handle()) {
                 std::eprintln!("[internal][tauri][warn] {}", error.message);
             }
@@ -3503,6 +3505,7 @@ pub fn run() {
             remote_server::remote_server_set_search_results,
             remote_server::remote_server_set_playlists,
             remote_server::remote_server_set_playlist_tracks,
+            auto_patch::auto_patch_portable_exe,
             #[cfg(target_os = "macos")]
             macos_media::update_macos_media_session,
             #[cfg(target_os = "windows")]

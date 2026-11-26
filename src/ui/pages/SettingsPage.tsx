@@ -40,14 +40,17 @@ import {
 } from "../settings/remoteControl";
 import { useRemoteServer } from "../../player/useRemoteServer";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
   checkForCustomUpdates,
   checkForUpstreamUpdates,
+  autoPatchExecutable,
   type CustomUpdateInfo,
   type UpstreamUpdateInfo,
+  type PatchProgress,
   getUpdateFailureMessage,
   getInstalledVersion,
 } from "../../internal/updateChecker";
@@ -300,6 +303,9 @@ export function SettingsPage({
     "idle" | "checking" | "current" | "error"
   >("idle");
   const [customUpdateError, setCustomUpdateError] = useState<string | null>(null);
+  const [patchProgress, setPatchProgress] = useState<PatchProgress | null>(null);
+  const [isPatching, setIsPatching] = useState(false);
+  const [patchError, setPatchError] = useState<string | null>(null);
 
   const [upstreamUpdateResult, setUpstreamUpdateResult] = useState<UpstreamUpdateInfo | null>(null);
   const [upstreamUpdateStatus, setUpstreamUpdateStatus] = useState<
@@ -420,6 +426,39 @@ export function SettingsPage({
     const timeout = window.setTimeout(() => setResetSettingsConfirming(false), 4000);
     return () => window.clearTimeout(timeout);
   }, [resetSettingsConfirming]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<PatchProgress>("auto-patch:progress", (event) => {
+      setPatchProgress(event.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const handleAutoPatch = async (downloadUrl: string, releaseTag?: string) => {
+    setIsPatching(true);
+    setPatchError(null);
+    setPatchProgress({
+      stage: "downloading",
+      downloaded: 0,
+      total: 0,
+      percent: 0,
+      message: "Initiating auto-patch...",
+    });
+    try {
+      if (releaseTag) {
+        localStorage.setItem("installed_custom_tag", releaseTag);
+      }
+      await autoPatchExecutable(downloadUrl);
+    } catch (err: any) {
+      setPatchError(err?.message || String(err) || "Failed to auto-patch application.");
+      setIsPatching(false);
+    }
+  };
 
   const handleCheckCustomUpdates = async () => {
     setCustomUpdateStatus("checking");
@@ -1060,19 +1099,94 @@ export function SettingsPage({
               </div>
 
               {customUpdateResult && (
-                <div className={styles.updateResult}>
-                  <span>
-                    Latest build: <strong>{customUpdateResult.commitTitle}</strong> (
-                    {new Date(customUpdateResult.updatedAt).toLocaleDateString()})
-                  </span>
-                  <button
-                    className={styles.githubButton}
-                    type="button"
-                    onClick={() => void openUrl(customUpdateResult.downloadUrl)}
-                  >
-                    <IconDownload size={16} />
-                    Download Portable EXE
-                  </button>
+                <div className={styles.updateResult} style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <span>
+                      {customUpdateResult.isNewer ? "✨ New version available: " : "Current build: "}
+                      <strong>{customUpdateResult.commitTitle}</strong>
+                      {customUpdateResult.releaseTag && <span> ({customUpdateResult.releaseTag})</span>}
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {customUpdateResult.isDirectExe ? (
+                        <button
+                          className={styles.secondaryButton}
+                          type="button"
+                          style={{
+                            background: "var(--accent, #1db954)",
+                            color: "#000",
+                            fontWeight: 700,
+                            padding: "6px 14px",
+                          }}
+                          disabled={isPatching}
+                          onClick={() => void handleAutoPatch(customUpdateResult.downloadUrl, customUpdateResult.releaseTag)}
+                        >
+                          <IconDownload size={16} />
+                          {isPatching
+                            ? "Patching..."
+                            : customUpdateResult.isNewer
+                            ? "Update & Auto-Patch"
+                            : "Re-patch into App"}
+                        </button>
+                      ) : (
+                        <button
+                          className={styles.githubButton}
+                          type="button"
+                          onClick={() => void openUrl(customUpdateResult.downloadUrl)}
+                        >
+                          <IconDownload size={16} />
+                          Download Portable EXE
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Auto-Patch Live Progress Bar */}
+                  {isPatching && patchProgress && (
+                    <div
+                      style={{
+                        width: "100%",
+                        background: "rgba(255,255,255,0.08)",
+                        borderRadius: 6,
+                        padding: "10px 12px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 13,
+                          marginBottom: 6,
+                        }}
+                      >
+                        <span>{patchProgress.message}</span>
+                        <span>{Math.round(patchProgress.percent)}%</span>
+                      </div>
+                      <div
+                        style={{
+                          width: "100%",
+                          height: 6,
+                          background: "rgba(255,255,255,0.15)",
+                          borderRadius: 3,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${Math.min(100, Math.max(0, patchProgress.percent))}%`,
+                            background: "var(--accent, #1db954)",
+                            transition: "width 0.2s ease",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {patchError && (
+                    <p className={styles.error} style={{ margin: 0 }}>
+                      Patch failed: {patchError}
+                    </p>
+                  )}
                 </div>
               )}
               {customUpdateError && (

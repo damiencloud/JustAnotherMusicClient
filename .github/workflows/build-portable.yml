@@ -36,6 +36,8 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+        env:
+          VITE_CUSTOM_RELEASE_TAG: "v1.3.2-portable-${{ github.run_number }}"
 
       - name: Build Tauri standalone executable
         run: npx tauri build --no-bundle
