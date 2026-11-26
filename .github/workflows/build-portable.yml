@@ -47,12 +47,12 @@ jobs:
           path: src-tauri/target/release/just-another-music-client.exe
           if-no-files-found: error
 
-      - name: Create Private Draft Release
+      - name: Publish Portable Release
         uses: softprops/action-gh-release@v2
         with:
           name: "JustAnotherMusicClient Portable (v1.3.2-remote)"
           tag_name: "v1.3.2-portable-${{ github.run_number }}"
-          draft: true
+          draft: false
           prerelease: false
           files: |
             src-tauri/target/release/just-another-music-client.exe

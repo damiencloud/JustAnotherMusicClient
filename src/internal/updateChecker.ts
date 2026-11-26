@@ -36,6 +36,37 @@ export interface UpstreamUpdateInfo {
 export async function checkForCustomUpdates(): Promise<CustomUpdateInfo | null> {
   try {
     const installedVersion = await getVersion();
+
+    // Check for published releases first
+    try {
+      const relRes = await fetch(
+        `https://api.github.com/repos/${CUSTOM_FORK_REPO}/releases/latest`,
+        { headers: { Accept: "application/vnd.github.v3+json" } }
+      );
+      if (relRes.ok) {
+        const relData = (await relRes.json()) as {
+          name?: string;
+          tag_name?: string;
+          html_url?: string;
+          published_at?: string;
+          created_at?: string;
+          assets?: Array<{ name: string; browser_download_url: string }>;
+        };
+        const asset = relData.assets?.find((a) => a.name.endsWith(".exe"));
+        if (relData.html_url) {
+          return {
+            installedVersion,
+            runUrl: relData.html_url,
+            commitTitle: relData.name || relData.tag_name || "Latest Portable Release",
+            updatedAt: relData.published_at || relData.created_at || new Date().toISOString(),
+            downloadUrl: asset?.browser_download_url || relData.html_url,
+          };
+        }
+      }
+    } catch {
+      // Fall through to actions runs
+    }
+
     const res = await fetch(
       `https://api.github.com/repos/${CUSTOM_FORK_REPO}/actions/runs?branch=main&status=success&per_page=1`,
       { headers: { Accept: "application/vnd.github.v3+json" } }
