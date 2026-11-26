@@ -127,11 +127,13 @@ impl RemoteServer {
     fn run_listener(&self) {
         let port = *self.port.lock().unwrap_or_else(|e| e.into_inner());
         let bind_addr = ("0.0.0.0", port);
-        let listener = match TcpListener::bind(bind_addr) {
-            Ok(l) => l,
-            Err(err) => {
-                eprintln!("[remote_server] Failed to bind to 0.0.0.0:{}: {}", port, err);
-                return;
+        let listener = loop {
+            match TcpListener::bind(bind_addr) {
+                Ok(l) => break l,
+                Err(err) => {
+                    eprintln!("[remote_server] Port {} busy ({}), retrying in 3s...", port, err);
+                    thread::sleep(Duration::from_secs(3));
+                }
             }
         };
 
