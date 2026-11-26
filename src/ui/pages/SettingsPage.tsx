@@ -27,6 +27,9 @@ import {
   IconTrash,
   IconUser,
   IconDeviceMobile,
+  IconGitBranch,
+  IconDownload,
+  IconExternalLink,
 } from "@tabler/icons-react";
 import { QRCodeSvg } from "../components/remote/QRCodeSvg";
 import {
@@ -41,12 +44,12 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
-  checkForUpdates,
+  checkForCustomUpdates,
+  checkForUpstreamUpdates,
+  type CustomUpdateInfo,
+  type UpstreamUpdateInfo,
   getUpdateFailureMessage,
   getInstalledVersion,
-  installUpdate,
-  type UpdateInfo,
-  type UpdateInstallProgress,
 } from "../../internal/updateChecker";
 import {
   clearCache,
@@ -292,12 +295,17 @@ export function SettingsPage({
   const [cacheBusy, setCacheBusy] = useState(false);
   const [cacheError, setCacheError] = useState<string | null>(null);
   const [installedVersion, setInstalledVersion] = useState<string | null>(null);
-  const [updateResult, setUpdateResult] = useState<UpdateInfo | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<
-    "idle" | "checking" | "installing" | "current" | "error"
+  const [customUpdateResult, setCustomUpdateResult] = useState<CustomUpdateInfo | null>(null);
+  const [customUpdateStatus, setCustomUpdateStatus] = useState<
+    "idle" | "checking" | "current" | "error"
   >("idle");
-  const [updateProgress, setUpdateProgress] = useState<UpdateInstallProgress | null>(null);
-  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [customUpdateError, setCustomUpdateError] = useState<string | null>(null);
+
+  const [upstreamUpdateResult, setUpstreamUpdateResult] = useState<UpstreamUpdateInfo | null>(null);
+  const [upstreamUpdateStatus, setUpstreamUpdateStatus] = useState<
+    "idle" | "checking" | "current" | "error"
+  >("idle");
+  const [upstreamUpdateError, setUpstreamUpdateError] = useState<string | null>(null);
   const [releaseChangelog, setReleaseChangelog] = useState<ReleaseChangelog | null>(null);
   const [releaseChangelogLoading, setReleaseChangelogLoading] = useState(false);
   const [releaseChangelogError, setReleaseChangelogError] = useState<string | null>(null);
@@ -413,30 +421,31 @@ export function SettingsPage({
     return () => window.clearTimeout(timeout);
   }, [resetSettingsConfirming]);
 
-  const handleCheckForUpdates = async () => {
-    setUpdateStatus("checking");
-    setUpdateResult(null);
-    setUpdateError(null);
-    setUpdateProgress(null);
+  const handleCheckCustomUpdates = async () => {
+    setCustomUpdateStatus("checking");
+    setCustomUpdateResult(null);
+    setCustomUpdateError(null);
     try {
-      const update = await checkForUpdates();
-      setUpdateResult(update);
-      setUpdateStatus(update ? "idle" : "current");
+      const update = await checkForCustomUpdates();
+      setCustomUpdateResult(update);
+      setCustomUpdateStatus("current");
     } catch (error) {
-      setUpdateError(getUpdateFailureMessage(error));
-      setUpdateStatus("error");
+      setCustomUpdateError(getUpdateFailureMessage(error));
+      setCustomUpdateStatus("error");
     }
   };
 
-  const handleInstallUpdate = async () => {
-    if (!updateResult) return;
-    setUpdateStatus("installing");
-    setUpdateError(null);
+  const handleCheckUpstreamUpdates = async () => {
+    setUpstreamUpdateStatus("checking");
+    setUpstreamUpdateResult(null);
+    setUpstreamUpdateError(null);
     try {
-      await installUpdate(updateResult, setUpdateProgress);
-    } catch {
-      setUpdateError("Unable to install the update. You can download it from GitHub.");
-      setUpdateStatus("error");
+      const update = await checkForUpstreamUpdates();
+      setUpstreamUpdateResult(update);
+      setUpstreamUpdateStatus("current");
+    } catch (error) {
+      setUpstreamUpdateError(getUpdateFailureMessage(error));
+      setUpstreamUpdateStatus("error");
     }
   };
 
@@ -1030,15 +1039,56 @@ export function SettingsPage({
             </div>
 
             <div className={styles.settingsList}>
+              {/* Dual-Source Updates: Custom Fork + Official Upstream */}
+              {/* 1. Custom Remote Build (damiencloud) */}
               <div className={styles.actionRow}>
                 <span className={styles.toggleDescription}>
-                  <strong>Updates</strong>
+                  <strong>Custom Remote Build</strong>
+                  <span>Your custom portable build with mobile web remote (port 9863) & playlist queue.</span>
+                </span>
+                <div className={styles.updateActions}>
+                  <button
+                    className={styles.secondaryButton}
+                    type="button"
+                    disabled={customUpdateStatus === "checking"}
+                    onClick={() => void handleCheckCustomUpdates()}
+                  >
+                    <IconRefresh size={18} />
+                    {customUpdateStatus === "checking" ? "Checking..." : "Check Custom Updates"}
+                  </button>
+                </div>
+              </div>
+
+              {customUpdateResult && (
+                <div className={styles.updateResult}>
                   <span>
-                    Installed version: {
+                    Latest build: <strong>{customUpdateResult.commitTitle}</strong> (
+                    {new Date(customUpdateResult.updatedAt).toLocaleDateString()})
+                  </span>
+                  <button
+                    className={styles.githubButton}
+                    type="button"
+                    onClick={() => void openUrl(customUpdateResult.downloadUrl)}
+                  >
+                    <IconDownload size={16} />
+                    Download Portable EXE
+                  </button>
+                </div>
+              )}
+              {customUpdateError && (
+                <p className={styles.error}>{customUpdateError}</p>
+              )}
+
+              {/* 2. Official Upstream (2latemc) */}
+              <div className={styles.actionRow}>
+                <span className={styles.toggleDescription}>
+                  <strong>Official Upstream Releases (2latemc)</strong>
+                  <span>
+                    Official releases from original creator. (Current base: {
                       installedVersion
                         ? installedVersion === "Unknown" ? installedVersion : `v${installedVersion}`
-                        : "Loading..."
-                    }
+                        : "v1.3.2"
+                    })
                   </span>
                 </span>
                 <div className={styles.updateActions}>
@@ -1054,11 +1104,11 @@ export function SettingsPage({
                   <button
                     className={styles.secondaryButton}
                     type="button"
-                    disabled={updateStatus === "checking"}
-                    onClick={() => void handleCheckForUpdates()}
+                    disabled={upstreamUpdateStatus === "checking"}
+                    onClick={() => void handleCheckUpstreamUpdates()}
                   >
-                    <IconRefresh size={18} />
-                    {updateStatus === "checking" ? "Checking..." : "Check for updates"}
+                    <IconGitBranch size={18} />
+                    {upstreamUpdateStatus === "checking" ? "Checking..." : "Check Official Upstream"}
                   </button>
                 </div>
               </div>
@@ -1067,39 +1117,36 @@ export function SettingsPage({
                 <p className={styles.error}>{releaseChangelogError}</p>
               )}
 
-              {updateResult && (
+              {upstreamUpdateResult && (
                 <div className={styles.updateResult}>
                   <span>
-                    {updateStatus === "installing"
-                      ? updateProgress?.percent !== undefined
-                        ? `Downloading version ${updateResult.version}: ${updateProgress.percent}%`
-                        : `Preparing version ${updateResult.version}...`
-                      : `Version ${updateResult.version} is available.`}
+                    {upstreamUpdateResult.isNewer
+                      ? `Official release v${upstreamUpdateResult.upstreamVersion} is available upstream!`
+                      : `You are up to date with official releases (v${upstreamUpdateResult.upstreamVersion}).`}
                   </span>
-                  {updateResult.canInstall && (
-                    <button
-                      className={styles.githubButton}
-                      type="button"
-                      disabled={updateStatus === "installing"}
-                      onClick={() => void handleInstallUpdate()}
-                    >
-                      {updateStatus === "installing" ? "Installing..." : "Install"}
-                    </button>
-                  )}
                   <button
                     className={styles.secondaryButton}
                     type="button"
-                    onClick={() => void openUrl(updateResult.releaseUrl)}
+                    onClick={() => void openUrl(upstreamUpdateResult.releaseUrl)}
                   >
-                    {updateResult.canInstall ? "View changes" : "Download"}
+                    <IconExternalLink size={16} />
+                    View Release Notes
                   </button>
+                  {upstreamUpdateResult.isNewer && (
+                    <button
+                      className={styles.githubButton}
+                      type="button"
+                      title="Merge official updates into your fork and auto-build a new portable EXE"
+                      onClick={() => void openUrl(upstreamUpdateResult.syncUrl)}
+                    >
+                      <IconGitBranch size={16} />
+                      Sync Upstream & Rebuild
+                    </button>
+                  )}
                 </div>
               )}
-              {updateStatus === "current" && (
-                <p className={styles.updateMessage}>You are up to date.</p>
-              )}
-              {updateStatus === "error" && (
-                <p className={styles.error}>{updateError}</p>
+              {upstreamUpdateError && (
+                <p className={styles.error}>{upstreamUpdateError}</p>
               )}
 
               <div className={styles.actionRow}>

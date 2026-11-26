@@ -1,0 +1,34 @@
+name: Sync Upstream & Rebuild
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # Weekly check on Sunday 00:00 UTC
+
+jobs:
+  sync-upstream:
+    name: Sync with Official Repo
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git Author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/2latemc/JustAnotherMusicClient.git
+          git fetch upstream main
+
+      - name: Merge Upstream Main
+        run: |
+          git merge upstream/main --allow-unrelated-histories -m "chore(sync): merge official updates from 2latemc/JustAnotherMusicClient"
+          git push origin main
