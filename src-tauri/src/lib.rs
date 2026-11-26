@@ -3447,9 +3447,7 @@ pub fn run() {
                         let _ = app.emit("main-window-backgrounded", ());
                     });
                 }
-               system_username_get,
-            custom_theme_css_import,
-         }
+            }
             tauri::WindowEvent::Focused(true) => {
                 if window.label() == "main" {
                     let _ = window.app_handle().emit("window-focused", ());
@@ -3465,6 +3463,8 @@ pub fn run() {
             app_setting_remove,
             app_settings_clear,
             custom_theme_css_get,
+            custom_theme_css_import,
+            system_username_get,
             open_current_log,
             fetch_audio_bytes,
             fetch_audio_source,
